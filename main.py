@@ -2,10 +2,11 @@ import threading, pyttsx3, openai, pygame, json, random
 import speech_recognition as sr
 from sys import exit
 from time import sleep
+from keys import API_KEY
 
 pygame.init()
 engine = pyttsx3.init()
-openai.api_key = "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"
+openai.api_key = API_KEY
 
 SCREEN_HEIGHT, SCREEN_WIDTH = 600, 600
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
