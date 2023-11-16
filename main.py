@@ -1,4 +1,4 @@
-import pygame, sys, pyaudio, wave
+import pygame, sys, pyaudio, wave, threading
 from openai import OpenAI
 from settings import *
 from keys import API_KEY
@@ -28,6 +28,16 @@ def main():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                try:
+                    os.remove(os.path.join(LOCAL_DIR, "output.mp3"))
+                except:
+                    print("output.mp3 was not found")
+                
+                try:
+                    os.remove(os.path.join(LOCAL_DIR, "speech.mp3"))
+                except:
+                    print("speech.mp3 was not found.")
+                    
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -37,8 +47,6 @@ def main():
                     stream = p.open(format=FORMAT, channels=CHANNELS, rate=FS, input=True, frames_per_buffer=CHUNK)
             elif event.type == pygame.MOUSEBUTTONUP:
                 if state == "recording":
-                    state = "processing"
-
                     stream.close()
                     wf = wave.open(FILENAME, 'wb')
                     wf.setnchannels(CHANNELS)
@@ -47,6 +55,7 @@ def main():
                     wf.writeframes(b''.join(frames))
                     wf.close()
                     frames.clear()
+                    state = "processing"
 
         screen.fill(BG_COLOR)
 
@@ -59,14 +68,26 @@ def main():
         
         mouse = pygame.mouse.get_pos()
         current_mic_colour = BTN_COLOR
-        if state == "idle" and mic_btn.collidepoint(mouse):
-            current_mic_colour = BTN_HOVER_COLOR
+        if state == "idle":
+            if mic_btn.collidepoint(mouse):
+                current_mic_colour = BTN_HOVER_COLOR
         elif state != "recording":
             current_mic_colour = BTN_DISABLED_COLOR
 
         if state == "recording":
             data = stream.read(CHUNK)
             frames.append(data)
+        elif state == "processing":
+            audio_file = open(os.path.join(LOCAL_DIR, "output.mp3"), "rb")
+            transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
+            speech_filepath = os.path.join(LOCAL_DIR, "speech.mp3")
+            response = client.audio.speech.create(
+                model="tts-1",
+                voice="fable",
+                input=transcript
+            )
+            response.stream_to_file(speech_filepath)
+            state = "idle"
 
         pygame.draw.rect(screen, current_mic_colour, mic_btn, border_radius=50)
         screen.blit(mic, mic_rect)
