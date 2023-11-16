@@ -1,85 +1,68 @@
-import openai
-import json
+# Import the necessary modules.
+import tkinter
+import tkinter as tk
+import tkinter.messagebox
+import pyaudio
+import wave
+import os
 
-question = "Is Alex Fenn a femboy?"
 
-openai.api_key = "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"
-response = ""
-responseType = "first"
+class RecAUD:
 
-def isHeAFemboy(name):
-    if "alex" in name.lower():
-        return "Alex Fenn is currently a femboy."
-    else:
-        isFemboy = not sum(ord(char) for char in name)
-        if isFemboy:
-            return f"{name} is a femboy currently."
-        return f"{name} is not a femboy currently"
+    def __init__(self, chunk=3024, frmat=pyaudio.paInt16, channels=1, rate=44100, py=pyaudio.PyAudio()):
 
-def run_conversation():
-    global response, responseType
-    messages = [{"role": "user", "content": question}]
-    functions = [
-        {
-            "name": "isHeAFemboy",
-            "description": "A function that tells you if someone is a femboy by entering their name",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "The name of a person. For example: Alex",
-                    }
-                },
-                "required": ["name"],
-            }
-        }
-    ]
+        # Start Tkinter and set Title
+        self.main = tkinter.Tk()
+        self.collections = []
+        self.main.geometry('500x300')
+        self.main.title('Record')
+        self.CHUNK = chunk
+        self.FORMAT = frmat
+        self.CHANNELS = channels
+        self.RATE = rate
+        self.p = py
+        self.frames = []
+        self.st = 1
+        self.stream = self.p.open(format=self.FORMAT, channels=self.CHANNELS, rate=self.RATE, input=True, frames_per_buffer=self.CHUNK)
 
-    completion = openai.ChatCompletion.create(
-                    model = "gpt-3.5-turbo-0613",
-                    temperature = 0.8,
-                    max_tokens = 2000,
-                    messages = messages,
-                    functions=functions,
-                    function_call="auto"
-                    )
+        # Set Frames
+        self.buttons = tkinter.Frame(self.main, padx=120, pady=20)
 
-    first_response = completion.choices[0].message["content"]
+        # Pack Frame
+        self.buttons.pack(fill=tk.BOTH)
 
-    if first_response != None:
-        response = first_response
-        return
-    
-    response_message = completion['choices'][0]['message']
-    available_functions = {
-        "isHeAFemboy": isHeAFemboy
-    } 
-    function_name = response_message["function_call"]["name"]
-    function_to_call = available_functions[function_name]
-    function_args = json.loads(response_message["function_call"]["arguments"])
-    if function_to_call == isHeAFemboy:
-        function_response = function_to_call(
-            name=function_args.get("name")
-        )
 
-    messages.append(response_message)
-    print(function_response)
-    messages.append(
-        {
-            "role": "function",
-            "name": function_name,
-            "content": function_response,
-        },
-    )
-    second_response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo-0613",
-        messages=messages,
-    ) 
 
-    response = second_response.choices[0].message["content"]
-    responseType = "second"
+        # Start and Stop buttons
+        self.strt_rec = tkinter.Button(self.buttons, width=10, padx=10, pady=5, text='Start Recording', command=lambda: self.start_record())
+        self.strt_rec.grid(row=0, column=0, padx=50, pady=5)
+        self.stop_rec = tkinter.Button(self.buttons, width=10, padx=10, pady=5, text='Stop Recording', command=lambda: self.stop())
+        self.stop_rec.grid(row=1, column=0, columnspan=1, padx=50, pady=5)
 
-run_conversation()
-print(response)
-print(responseType)
+        tkinter.mainloop()
+
+    def start_record(self):
+        self.st = 1
+        self.frames = []
+        stream = self.p.open(format=self.FORMAT, channels=self.CHANNELS, rate=self.RATE, input=True, frames_per_buffer=self.CHUNK)
+        while self.st == 1:
+            data = stream.read(self.CHUNK)
+            self.frames.append(data)
+            print("* recording")
+            self.main.update()
+
+        stream.close()
+
+        wf = wave.open('test_recording.wav', 'wb')
+        wf.setnchannels(self.CHANNELS)
+        wf.setsampwidth(self.p.get_sample_size(self.FORMAT))
+        wf.setframerate(self.RATE)
+        wf.writeframes(b''.join(self.frames))
+        wf.close()
+
+    def stop(self):
+        self.st = 0
+
+
+# Create an object of the ProgramGUI class to begin the program.
+guiAUD = RecAUD()

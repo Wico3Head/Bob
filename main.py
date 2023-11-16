@@ -1,208 +1,76 @@
-import threading, pyttsx3, openai, pygame, json, random
-import speech_recognition as sr
-from sys import exit
-from time import sleep
+import pygame, sys, pyaudio, wave
+from openai import OpenAI
+from settings import *
 from keys import API_KEY
-
 pygame.init()
-engine = pyttsx3.init()
-openai.api_key = API_KEY
+p = pyaudio.PyAudio()
+client = OpenAI(api_key=API_KEY)
 
-SCREEN_HEIGHT, SCREEN_WIDTH = 600, 600
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Bob")
+pygame.display.set_caption("Bob - Your Virtual Assistant")
+pygame.display.set_icon(ICON)
 
-BG_COLOUR = "#ffffff"
-BLACK = "#000000"
-mic_on_src = pygame.transform.scale(pygame.image.load("mic_on.png"), (300, 300))
-mic_off_src = pygame.transform.scale(pygame.image.load("mic_off.png"), (300, 300))
-mic_rect = mic_on_src.get_rect(center=(300, 400))
+press_btn_msg = FONT.render("Press the button to speak!", True, "white")
+press_btn_msg_rect = press_btn_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 
-font = pygame.font.Font(None, 40)
-greet_text = font.render('Welcome!', True, BLACK)
-listening_text = font.render("Speak into the microphone", True, BLACK)
-unknown_text = font.render("Try again", True, BLACK)
-error_text = font.render("An error has occured", True, BLACK)
-processing_text = font.render("Processing...", True, BLACK)
-speaking_text = font.render("Speaking",True, BLACK)
-finished_text = font.render("", True, BLACK)
-terminate_text = font.render("Thank you, Bye!", True, BLACK)
+listening_msg = FONT.render("Listening...", True, "white")
+listening_msg_rect = listening_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 
-texts = {
-    "greet": greet_text,
-    "listening": listening_text,
-    "unknown": unknown_text,
-    "error": error_text,
-    "processing": processing_text,
-    "speaking": speaking_text,
-    "finished": finished_text,
-    "terminate": terminate_text
-}
-
-promptText = """You are a virtual assistant named Bob which behaves like google assistant or alexa. Since you are a text to speech model, please convert the symbols of numbers into words in your response. After ask if the user requires any assistance, call the program terminate if the user answers no."""
-
-question = ""
-response = ""
-state = "greet"
-conversation = []
-running = True
-
-def greet():
-    global state
-
-    engine.say("Hi, I am Bob, Your virtual assistant. Is there anything I can help you with?")
-    engine.runAndWait()
-    state = "finished"
-
-def listen():
-    global question, state
-
-    while True:
-        state = "listening"
-
-        r = sr.Recognizer()
-        with sr.Microphone() as source:                                                                                                                                                       
-            audio = r.listen(source)   
-
-        try:
-            question = r.recognize_google(audio)
-            break
-        except sr.UnknownValueError:
-            state = "unknown"
-            engine.say("Sorry, I did not catch that, please try again")
-            engine.runAndWait() 
-        except sr.RequestError as e:
-            state = "error"
-            engine.say("There seem to be an error, please to try again")
-            engine.runAndWait()
-
-def process():
-    global response, conversation
-
-    functions = [
-        {
-            "name": "terminate",
-            "description": "This function will terminate the program after a few seconds",
-            "parameters": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-    ]
-
-    conversation.append(question)
-    history = [{"role": "system", "content": promptText}, {"role": "assistant", "content": "Is there anything I can help you with?"},]
-    for count, message in enumerate(conversation):
-        history.append(
-            {
-                "role": "user" if count % 2 == 0 else "assistant",
-                "content": message
-            },
-        )
-
-    completion = openai.ChatCompletion.create(
-                    model = "gpt-3.5-turbo",
-                    messages = history,
-                    functions=functions,
-                    function_call="auto"
-                    )
-
-    first_response = completion.choices[0].message["content"]
-
-    if first_response != None:
-        response = first_response
-        return
-    
-    response_message = completion['choices'][0]['message']
-    available_functions = {
-        "terminate": terminate
-    } 
-    function_name = response_message["function_call"]["name"]
-    function_to_call = available_functions[function_name]
-    function_args = json.loads(response_message["function_call"]["arguments"])
-    if function_to_call == terminate:
-        function_response = terminate()
-        return
-
-    history.append(response_message)
-    history.append(
-        {
-            "role": "function",
-            "name": function_name,
-            "content": function_response,
-        },
-    )
-
-    second_response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=history,
-    ) 
-
-    response = second_response.choices[0].message["content"]
-
-def speak():
-    global conversation, state, question, response
-
-    engine.say(response)
-    engine.runAndWait()
-
-    if response[-1] == "?":
-        conversation.append(response)
-    else:
-        conversationOverResponse = "Is there anything else I can help you with?"
-        conversation = []
-
-        engine.say(conversationOverResponse)
-        engine.runAndWait()
-        
-    question = ""
-    response = ""    
-    state = "finished"
-    
-def terminate():
-    global state
-
-    engine.say("Thank you for using my services, I hope you have a great day! Bye bye.")
-    engine.runAndWait()
-    
-    state = "terminate"
-    return "program terminates soon"
+mic = pygame.transform.scale(pygame.image.load(os.path.join(LOCAL_DIR, "Assets/mic.png")), (300, 300))
+mic_rect = mic.get_rect(center=(SCREEN_WIDTH/2, SCREEN_HEIGHT/2+100))
+mic_btn = pygame.Rect(220, 320, 360, 360)
 
 def main():
-    global state, running
-    greeted = False
+    state = "idle"
+    frames = []
+    stream = None
 
     while True:
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or state == "terminate":
+            if event.type == pygame.QUIT:
                 pygame.quit()
-                exit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                pos = event.pos
+                if mic_btn.collidepoint(pos) and state != "recording":
+                    state = "recording"
+                    stream = p.open(format=FORMAT, channels=CHANNELS, rate=FS, input=True, frames_per_buffer=CHUNK)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if state == "recording":
+                    state = "processing"
 
-        if not greeted:
-            greet_thread = threading.Thread(target=greet)
-            greet_thread.start()
-            greeted = True
-        elif question == "" and state == "finished":
-            state = "listening"
-            listen_thread = threading.Thread(target=listen)
-            listen_thread.start()
-        elif question != "" and state == "listening":
-            state = "processing"
-            processing_thread = threading.Thread(target=process)
-            processing_thread.start()
-            running = False
-        elif response != "" and state == "processing":
-            state = "speaking"
-            speaking_thread = threading.Thread(target=speak)
-            speaking_thread.start()
+                    stream.close()
+                    wf = wave.open(FILENAME, 'wb')
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(p.get_sample_size(FORMAT))
+                    wf.setframerate(FS)
+                    wf.writeframes(b''.join(frames))
+                    wf.close()
+                    frames.clear()
+
+        screen.fill(BG_COLOR)
+
+        if state == "idle":
+            screen.blit(press_btn_msg, press_btn_msg_rect)
+        elif state == "recording":
+            screen.blit(listening_msg, listening_msg_rect)
+        elif state == "processing":
+            screen.blit(listening_msg, listening_msg_rect)
         
-        screen.fill(BG_COLOUR)
-        screen.blit(mic_on_src if state == "listening" else mic_off_src, mic_rect)
-        text = texts[state]
-        text_rect = text.get_rect(center=(300, 100))
-        screen.blit(text, text_rect)
+        mouse = pygame.mouse.get_pos()
+        current_mic_colour = BTN_COLOR
+        if state == "idle" and mic_btn.collidepoint(mouse):
+            current_mic_colour = BTN_HOVER_COLOR
+        elif state != "recording":
+            current_mic_colour = BTN_DISABLED_COLOR
 
-        pygame.display.update()    
+        if state == "recording":
+            data = stream.read(CHUNK)
+            frames.append(data)
+
+        pygame.draw.rect(screen, current_mic_colour, mic_btn, border_radius=50)
+        screen.blit(mic, mic_rect)
+        pygame.display.update()
 
 if __name__ == "__main__":
     main()
