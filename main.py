@@ -25,6 +25,9 @@ processing_msg_rect = processing_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 speaking_msg = FONT.render("Speaking", True, "white")
 speaking_msg_rect = processing_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 
+music_playing_msg = FONT.render("Music Playing", True, "white")
+music_playing_msg_rect = music_playing_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
+
 mic = pygame.transform.scale(pygame.image.load(os.path.join(LOCAL_DIR, "Assets/mic.png")), (300, 300))
 mic_rect = mic.get_rect(center=(SCREEN_WIDTH/2, SCREEN_HEIGHT/2+100))
 mic_btn = pygame.Rect(220, 320, 360, 360)
@@ -33,9 +36,71 @@ def getTime():
     weekday = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     return str(datetime.datetime.now()) + weekday[datetime.datetime.today().weekday()]
 
+def musicPlayingThread(filename):
+    global state
+    try:
+        pygame.mixer.music.load(os.path.join(LOCAL_DIR, "music/" + filename))
+        pygame.mixer.music.play()
+        state = "music"
+    except:
+        return
+    
+    while True:
+        if not pygame.mixer.music.get_busy():
+            return
+
+
+def play(filename):
+    global state
+    music_thread = threading.Thread(target=musicPlayingThread, args=[filename])
+    music_thread.start()
+    music_thread.join()
+    if state == "music":
+        return "The song has finished playing"
+    return "The song is not in the playlist, please add it in and restart the program."
+
 def playMusic(request):
-    print(request)
-    return "The song has finished playing"
+    current_conversation = [{"role": "system", "content": MUSIC_PROMPT}]
+
+    tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "play",
+                    "description": "Pass in the filename of the song and it was start playing automatically.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filename": {
+                                "type": "string",
+                                "description": "filename of the song"
+                            }
+                        },
+                        "required": ["filename"]
+                    }
+                }
+            }]
+
+    current_conversation.append({"role": "user", "content": request})
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo-1106",
+        messages=current_conversation,
+        tools=tools,
+        tool_choice="auto"
+    )
+
+    tool_calls = response.choices[0].message.tool_calls
+
+    if tool_calls:
+        available_functions = {
+            "play": play,
+        } 
+
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_to_call = available_functions[function_name]
+            function_args = json.loads(tool_call.function.arguments)
+            return function_to_call(filename=function_args.get("filename"))
 
 def process_speech():
     global state, history, calls_num
@@ -116,6 +181,8 @@ def process_speech():
         )   
 
         response_text = new_response.choices[0].message
+        if state == "music":
+            state = "speaking"
 
     history += f"assistant: {response_text.content}\n"
     speech_filepath = os.path.join(LOCAL_DIR, f"speech{calls_num}.mp3")
@@ -196,6 +263,8 @@ def main():
             screen.blit(processing_msg, processing_msg_rect)
         elif state == "speaking":
             screen.blit(speaking_msg, speaking_msg_rect)
+        elif state == "music":
+            screen.blit(music_playing_msg, music_playing_msg_rect)
         
         mouse = pygame.mouse.get_pos()
         current_mic_colour = BTN_COLOR
