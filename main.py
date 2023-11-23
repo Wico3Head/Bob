@@ -16,12 +16,40 @@ press_btn_msg_rect = press_btn_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 listening_msg = FONT.render("Listening...", True, "white")
 listening_msg_rect = listening_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
 
+processing_msg = FONT.render("Thinking...", True, "white")
+processing_msg_rect = processing_msg.get_rect(center=(SCREEN_WIDTH/2, 150))
+
 mic = pygame.transform.scale(pygame.image.load(os.path.join(LOCAL_DIR, "Assets/mic.png")), (300, 300))
 mic_rect = mic.get_rect(center=(SCREEN_WIDTH/2, SCREEN_HEIGHT/2+100))
 mic_btn = pygame.Rect(220, 320, 360, 360)
 
+def process_speech():
+    global state
+    audio_file = open(os.path.join(LOCAL_DIR, "output.mp3"), "rb")
+    transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
+    response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": PROMPT},
+        {"role": "user", "content": transcript},
+    ]
+    )
+    response_text = response.choices[0].message.content
+
+    speech_filepath = os.path.join(LOCAL_DIR, "speech.mp3")
+    response = client.audio.speech.create(
+        model="tts-1",
+        voice="fable",
+        input=response_text
+    )
+    response.stream_to_file(speech_filepath)
+    pygame.mixer.music.load(os.path.join(LOCAL_DIR, "speech.mp3"))
+    pygame.mixer.music.play()
+    state = "speaking"
+
+state = "idle"
 def main():
-    state = "idle"
+    global state
     frames = []
     stream = None
 
@@ -55,6 +83,9 @@ def main():
                     wf.writeframes(b''.join(frames))
                     wf.close()
                     frames.clear()
+                    
+                    process_thread = threading.Thread(target=process_speech)
+                    process_thread.start()
                     state = "processing"
 
         screen.fill(BG_COLOR)
@@ -64,11 +95,11 @@ def main():
         elif state == "recording":
             screen.blit(listening_msg, listening_msg_rect)
         elif state == "processing":
-            screen.blit(listening_msg, listening_msg_rect)
+            screen.blit(processing_msg, processing_msg_rect)
         
         mouse = pygame.mouse.get_pos()
         current_mic_colour = BTN_COLOR
-        if state == "idle":
+        if state == "idle" or state == "recording":
             if mic_btn.collidepoint(mouse):
                 current_mic_colour = BTN_HOVER_COLOR
         elif state != "recording":
@@ -76,18 +107,10 @@ def main():
 
         if state == "recording":
             data = stream.read(CHUNK)
-            frames.append(data)
-        elif state == "processing":
-            audio_file = open(os.path.join(LOCAL_DIR, "output.mp3"), "rb")
-            transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
-            speech_filepath = os.path.join(LOCAL_DIR, "speech.mp3")
-            response = client.audio.speech.create(
-                model="tts-1",
-                voice="fable",
-                input=transcript
-            )
-            response.stream_to_file(speech_filepath)
-            state = "idle"
+            frames.append(data) 
+        elif state == "speaking":
+            if not pygame.mixer.music.get_busy():
+                state == "idle"
 
         pygame.draw.rect(screen, current_mic_colour, mic_btn, border_radius=50)
         screen.blit(mic, mic_rect)
