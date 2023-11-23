@@ -30,25 +30,45 @@ mic_rect = mic.get_rect(center=(SCREEN_WIDTH/2, SCREEN_HEIGHT/2+100))
 mic_btn = pygame.Rect(220, 320, 360, 360)
 
 def getTime():
-    return str(datetime.datetime.now()) + str(datetime.datetime.today().weekday())
+    weekday = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    return str(datetime.datetime.now()) + weekday[datetime.datetime.today().weekday()]
 
-def getHistory():
-    return history
+def playMusic(request):
+    print(request)
+    return "The song has finished playing"
 
 def process_speech():
     global state, history, calls_num
     current_conversation = [{"role": "system", "content": PROMPT}, {"role": "system", "content": f"the chat history between you and the user are included here\n{history}"}]
 
-    functions = [
-            {
-                "name": "getTime",
-                "description": "get the current date and time in the form of year-month-day hour-minute-second-millisecond weekday",
-                "parameters": {
-                    "type": "object",
-                    "properties": {}
+    tools = [{
+                "type": "function",
+                "function": {
+                    "name": "getTime",
+                    "description": "get the current date and time in the form of year-month-day hour-minute-second-millisecond weekday",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
                 }
-            }
-    ]
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "playMusic",
+                    "description": "Pass in the user's request and it will automatically detect the song title and play the song if it is in a playlist, it also returns whether a song is played or not",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "request": {
+                                "type": "string",
+                                "description": "The request from the user"
+                            }
+                        },
+                        "required": ["request"]
+                    }
+                }
+            }]
 
     audio_file = open(os.path.join(LOCAL_DIR, "output.mp3"), "rb")
     transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
@@ -56,48 +76,53 @@ def process_speech():
     current_conversation.append({"role": "user", "content": transcript})
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-3.5-turbo-1106",
         messages=current_conversation,
-        functions=functions,
-        function_call="auto"
+        tools=tools,
+        tool_choice="auto"
     )
-    response_text = response.choices[0].message.content
+    response_text = response.choices[0].message
+    tool_calls = response_text.tool_calls
 
-    while response_text == None:
-        function_call = response.choices[0].message.function_call
+    if tool_calls:
         available_functions = {
             "getTime": getTime,
+            "playMusic": playMusic
         } 
-        function_name = function_call.name
-        function_to_call = available_functions[function_name]
-        function_args = function_call.arguments
+        
+        current_conversation.append(response_text)
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_to_call = available_functions[function_name]
+            function_args = json.loads(tool_call.function.arguments)
 
-        if function_to_call == getTime:
-            function_response = getTime()
+            if function_to_call == getTime:
+                function_response = function_to_call()
+            elif function_to_call == playMusic:
+                function_response = function_to_call(request=function_args.get("request"))
 
-        current_conversation.append(
-            {
-                "role": "function",
-                "name": function_name,
-                "content": function_response,
-            },
-        )
+            current_conversation.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": function_response,
+                }
+            ) 
 
         new_response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turbo-1106",
             messages=current_conversation,
-            functions=functions,
-            function_call="auto"
-        ) 
+        )   
 
-        response_text = new_response.choices[0].message.content
+        response_text = new_response.choices[0].message
 
-    history += f"assistant: {response_text}\n"
+    history += f"assistant: {response_text.content}\n"
     speech_filepath = os.path.join(LOCAL_DIR, f"speech{calls_num}.mp3")
     response = client.audio.speech.create(
         model="tts-1",
         voice="fable",
-        input=response_text
+        input=response_text.content
     )
 
     response.stream_to_file(speech_filepath)
@@ -118,6 +143,8 @@ def main():
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                pygame.quit()
+                
                 try:
                     os.remove(os.path.join(LOCAL_DIR, "output.mp3"))
                 except:
@@ -129,7 +156,6 @@ def main():
                     except:
                         print(f"speech{num}.mp3 was not found.")
                     
-                pygame.quit()
                 sys.exit()
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
