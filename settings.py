@@ -24,8 +24,7 @@ for file in files:
     filenames += file + " "
 
 PROMPT = """
-You are a virtual assistant named Bob which behaves like google assistant or alexa. Do not make up data! Please use your functions
- to work out the data your need or tell the user that the data is not accessible if the functions do not tell you enough.
+You are a virtual assistant named Bob which behaves like google assistant or alexa. 
  You have memory as the previous chat history are attached before the user's request. The following paragraphs introduces the 
  functions you have access to:
 

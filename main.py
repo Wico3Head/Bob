@@ -222,38 +222,38 @@ def process_speech():
         } 
         
         current_conversation.append(response_text)
-        
-        tool_call = tool_calls[0]
-        function_name = tool_call.function.name
-        function_to_call = available_functions[function_name]
-        function_args = json.loads(tool_call.function.arguments)
 
-        if function_to_call == getTime:
-            function_response = function_to_call()
-        elif function_to_call == playMusic:
-            function_response = function_to_call(request=function_args.get("request"))
-        elif function_to_call == getLocation:
-            function_response = function_to_call()
-        elif function_to_call == getWeather:
-            function_response = function_to_call()
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_to_call = available_functions[function_name]
+            function_args = json.loads(tool_call.function.arguments)
 
-        current_conversation.append(
-            {
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "name": function_name,
-                "content": function_response,
-            }
-        ) 
+            if function_to_call == getTime:
+                function_response = function_to_call()
+            elif function_to_call == playMusic:
+                function_response = function_to_call(request=function_args.get("request"))
+            elif function_to_call == getLocation:
+                function_response = function_to_call()
+            elif function_to_call == getWeather:
+                function_response = function_to_call()
 
-    new_response = client.chat.completions.create(
-        model="gpt-3.5-turbo-1106",
-        messages=current_conversation,
-    )   
+            current_conversation.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": function_response,
+                }
+            ) 
 
-    response_text = new_response.choices[0].message
-    if state == "music":
-        state = "speaking"
+            new_response = client.chat.completions.create(
+                model="gpt-3.5-turbo-1106",
+                messages=current_conversation,
+            )   
+
+            response_text = new_response.choices[0].message
+            if state == "music":
+                state = "speaking"
 
     history += f"assistant: {response_text.content}\n"
     speech_filepath = os.path.join(LOCAL_DIR, f"speech{calls_num}.mp3")
