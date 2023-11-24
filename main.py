@@ -44,24 +44,39 @@ def get_ip():
 def getLocation():
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
-    response_text = f"city:{response.get('city')}, region:{response.get('region')}, country:{response.get('country')}, latitude:{response.get('latitude')}, longitude:{response.get('longitude')}"
+    response_text = f"city:{response.get('city')}, region:{response.get('region')}, country:{response.get('country')}"
     
     if response.get("error"):
         try:
             with open("prev_location.pkl", "rb") as f:
                 prev_location = pickle.load(f)
-            return "An error occured, but the system found previous location history: " + prev_location
+            return "An error occured, but the system found previous location history: " + f"city:{prev_location.get('city')}, region:{prev_location.get('region')}, country:{prev_location.get('country')}"
         except:
             return "An error occured, the system try searching for previous location history but none was found. Please try again later"  
     else:
         with open("prev_location.pkl", "wb") as f:
-            pickle.dump(response_text, f)
+            pickle.dump(response, f)
 
         return response_text
     
-def getWeather(lat, lon):
+def getWeather():
+    ip_address = get_ip()
+    loc_response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
+
+    if loc_response.get('error'):
+        try:
+            with open("prev_location.pkl", "rb") as f:
+                prev_location = pickle.load(f)
+                lat = prev_location.get('latitude')
+                lon = prev_location.get('longitude')
+        except:
+            return "An error occured, please try again later."
+    else:
+        lat = loc_response.get('latitude')
+        lon = loc_response.get('longitude')
+
     response = requests.get(f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}").json()
-    return f"The current temperature is {round(response['current']['temp']-273.16, 2)}. Weather: {response['current']['weather'][0]['main']}, Description: {response['current']['weather'][0]['description']}"
+    return f"The current temperature is {round(response['current']['temp']-273.16, 2)} celsius. Weather: {response['current']['weather'][0]['main']}, Description: {response['current']['weather'][0]['description']}"
 
 def musicPlayingThread(filename):
     global state
@@ -148,7 +163,7 @@ def process_speech():
                 "type": "function",
                 "function": {
                     "name": "getLocation",
-                    "description": "return the user's location including the latitude and longitude or tell you if an error occured and any previous location history was found, please be aware that this function doesn't give you any weather information",
+                    "description": "return the user's location or tell you if an error occured and any previous location history was found, please be aware that this function doesn't give you any weather information",
                     "parameters": {
                         "type": "object",
                         "properties": {}
@@ -176,20 +191,10 @@ def process_speech():
                 "type": "function",
                 "function": {
                     "name": "getWeather",
-                    "description": "Pass in the latitude and longitude and it will return the weather related data like temperature, etc",
+                    "description": "Return the weather related data like temperature, etc. If an error occur you will be notified",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "lat": {
-                                "type": "number",
-                                "description": "The latitude of the user's location"
-                            },
-                            "lon": {
-                                "type": "number",
-                                "description": "The longitude of the user's location"
-                            }
-                        },
-                        "required": ["lat", "lon"]
+                        "properties": {}
                     }
                 }
             }]
@@ -217,38 +222,38 @@ def process_speech():
         } 
         
         current_conversation.append(response_text)
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            print(function_name)
-            function_to_call = available_functions[function_name]
-            function_args = json.loads(tool_call.function.arguments)
+        
+        tool_call = tool_calls[0]
+        function_name = tool_call.function.name
+        function_to_call = available_functions[function_name]
+        function_args = json.loads(tool_call.function.arguments)
 
-            if function_to_call == getTime:
-                function_response = function_to_call()
-            elif function_to_call == playMusic:
-                function_response = function_to_call(request=function_args.get("request"))
-            elif function_to_call == getLocation:
-                function_response = function_to_call()
-            elif function_to_call == getWeather:
-                function_response = function_to_call(lat=function_args.get("lat"), lon=function_args.get("lon"))
+        if function_to_call == getTime:
+            function_response = function_to_call()
+        elif function_to_call == playMusic:
+            function_response = function_to_call(request=function_args.get("request"))
+        elif function_to_call == getLocation:
+            function_response = function_to_call()
+        elif function_to_call == getWeather:
+            function_response = function_to_call()
 
-            current_conversation.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": function_response,
-                }
-            ) 
+        current_conversation.append(
+            {
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response,
+            }
+        ) 
 
-        new_response = client.chat.completions.create(
-            model="gpt-3.5-turbo-1106",
-            messages=current_conversation,
-        )   
+    new_response = client.chat.completions.create(
+        model="gpt-3.5-turbo-1106",
+        messages=current_conversation,
+    )   
 
-        response_text = new_response.choices[0].message
-        if state == "music":
-            state = "speaking"
+    response_text = new_response.choices[0].message
+    if state == "music":
+        state = "speaking"
 
     history += f"assistant: {response_text.content}\n"
     speech_filepath = os.path.join(LOCAL_DIR, f"speech{calls_num}.mp3")
