@@ -1,10 +1,10 @@
-import pygame, sys, pyaudio, wave, threading, librosa, datetime, json
+import pygame, sys, pyaudio, wave, threading, librosa, datetime, json, requests, pickle
 from openai import OpenAI
 from settings import *
-from keys import API_KEY
+from keys import OPENAI_API_KEY, WEATHER_API_KEY
 pygame.init()
 p = pyaudio.PyAudio()
-client = OpenAI(api_key=API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Bob - Your Virtual Assistant")
@@ -35,6 +35,33 @@ mic_btn = pygame.Rect(220, 320, 360, 360)
 def getTime():
     weekday = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     return str(datetime.datetime.now()) + weekday[datetime.datetime.today().weekday()]
+
+def get_ip():
+    response = requests.get('https://api64.ipify.org?format=json').json()
+    return response["ip"]
+
+
+def getLocation():
+    ip_address = get_ip()
+    response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
+    response_text = f"city:{response.get('city')}, region:{response.get('region')}, country:{response.get('country')}, latitude:{response.get('latitude')}, longitude:{response.get('longitude')}"
+    
+    if response.get("error"):
+        try:
+            with open("prev_location.pkl", "rb") as f:
+                prev_location = pickle.load(f)
+            return "An error occured, but the system found previous location history: " + prev_location
+        except:
+            return "An error occured, the system try searching for previous location history but none was found. Please try again later"  
+    else:
+        with open("prev_location.pkl", "wb") as f:
+            pickle.dump(response_text, f)
+
+        return response_text
+    
+def getWeather(lat, lon):
+    response = requests.get(f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}").json()
+    return f"The current temperature is {round(response['current']['temp']-273.16, 2)}. Weather: {response['current']['weather'][0]['main']}, Description: {response['current']['weather'][0]['description']}"
 
 def musicPlayingThread(filename):
     global state
@@ -110,7 +137,18 @@ def process_speech():
                 "type": "function",
                 "function": {
                     "name": "getTime",
-                    "description": "get the current date and time in the form of year-month-day hour-minute-second-millisecond weekday",
+                    "description": "get the current date and time in the form of year-month-day hour-minute-second-millisecond weekday, only call the function if the user ask for the time",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getLocation",
+                    "description": "return the user's location including the latitude and longitude or tell you if an error occured and any previous location history was found, please be aware that this function doesn't give you any weather information",
                     "parameters": {
                         "type": "object",
                         "properties": {}
@@ -133,11 +171,32 @@ def process_speech():
                         "required": ["request"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "getWeather",
+                    "description": "Pass in the latitude and longitude and it will return the weather related data like temperature, etc",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "lat": {
+                                "type": "number",
+                                "description": "The latitude of the user's location"
+                            },
+                            "lon": {
+                                "type": "number",
+                                "description": "The longitude of the user's location"
+                            }
+                        },
+                        "required": ["lat", "lon"]
+                    }
+                }
             }]
 
     audio_file = open(os.path.join(LOCAL_DIR, "output.mp3"), "rb")
     transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
-    history += f"user: {transcript}\n"
+    history += f"user: {transcript}\n"  
     current_conversation.append({"role": "user", "content": transcript})
 
     response = client.chat.completions.create(
@@ -152,12 +211,15 @@ def process_speech():
     if tool_calls:
         available_functions = {
             "getTime": getTime,
-            "playMusic": playMusic
+            "playMusic": playMusic,
+            "getLocation": getLocation,
+            "getWeather": getWeather
         } 
         
         current_conversation.append(response_text)
         for tool_call in tool_calls:
             function_name = tool_call.function.name
+            print(function_name)
             function_to_call = available_functions[function_name]
             function_args = json.loads(tool_call.function.arguments)
 
@@ -165,6 +227,10 @@ def process_speech():
                 function_response = function_to_call()
             elif function_to_call == playMusic:
                 function_response = function_to_call(request=function_args.get("request"))
+            elif function_to_call == getLocation:
+                function_response = function_to_call()
+            elif function_to_call == getWeather:
+                function_response = function_to_call(lat=function_args.get("lat"), lon=function_args.get("lon"))
 
             current_conversation.append(
                 {
